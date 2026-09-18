@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  background: #ffffff;
+  color: #0a0a0a;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+.grayscale-photo {
+  filter: grayscale(1) contrast(1.05);
+}
