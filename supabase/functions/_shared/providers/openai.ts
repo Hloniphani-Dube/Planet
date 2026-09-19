@@ -12,18 +12,19 @@ export async function diagnoseWithOpenAI(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const client = new OpenAI({ apiKey });
 
   const completion = await client.chat.completions.create({
     model: "gpt-4o",
-    max_tokens: 512,
+    max_tokens: 2048,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
         content: [
-          { type: "text", text: buildUserPrompt(images.length, weatherContext) },
+          { type: "text", text: buildUserPrompt(images.length, weatherContext, userNotes) },
           ...images.map((image) => ({
             type: "image_url" as const,
             image_url: { url: `data:${image.mimeType};base64,${image.base64}` },

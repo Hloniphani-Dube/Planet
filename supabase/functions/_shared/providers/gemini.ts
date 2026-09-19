@@ -1,11 +1,12 @@
-import { GoogleGenerativeAI, SchemaType } from "npm:@google/generative-ai@0.24.1";
-import { buildUserPrompt, DIAGNOSIS_CATEGORIES, SYSTEM_PROMPT } from "../schema.ts";
+import { GoogleGenerativeAI, type ResponseSchema } from "npm:@google/generative-ai@0.24.1";
+import { buildUserPrompt, DIAGNOSIS_JSON_SCHEMA, SYSTEM_PROMPT, toGeminiSchema } from "../schema.ts";
 import type { Diagnosis, ImageInput } from "../types.ts";
 
 export async function diagnoseWithGemini(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -13,31 +14,14 @@ export async function diagnoseWithGemini(
     systemInstruction: SYSTEM_PROMPT,
     generationConfig: {
       responseMimeType: "application/json",
-      responseSchema: {
-        type: SchemaType.OBJECT,
-        properties: {
-          plantName: { type: SchemaType.STRING },
-          category: {
-            type: SchemaType.STRING,
-            format: "enum",
-            enum: [...DIAGNOSIS_CATEGORIES],
-          },
-          summary: { type: SchemaType.STRING },
-          fix: { type: SchemaType.STRING },
-          confidence: {
-            type: SchemaType.STRING,
-            format: "enum",
-            enum: ["low", "medium", "high"],
-          },
-        },
-        required: ["plantName", "category", "summary", "fix", "confidence"],
-      },
+      // Gemini's dialect of the same JSON Schema the other providers use.
+      responseSchema: toGeminiSchema(DIAGNOSIS_JSON_SCHEMA) as unknown as ResponseSchema,
     },
   });
 
   const result = await model.generateContent([
     ...images.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.base64 } })),
-    { text: buildUserPrompt(images.length, weatherContext) },
+    { text: buildUserPrompt(images.length, weatherContext, userNotes) },
   ]);
 
   return JSON.parse(result.response.text()) as Diagnosis;

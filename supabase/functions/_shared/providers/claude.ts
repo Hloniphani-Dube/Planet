@@ -12,12 +12,13 @@ export async function diagnoseWithClaude(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const client = new Anthropic({ apiKey });
 
   const message = await client.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 512,
+    max_tokens: 2048,
     system: SYSTEM_PROMPT,
     tools: [RECORD_DIAGNOSIS_TOOL],
     tool_choice: { type: "tool", name: "record_diagnosis" },
@@ -33,7 +34,7 @@ export async function diagnoseWithClaude(
               data: image.base64,
             },
           })),
-          { type: "text", text: buildUserPrompt(images.length, weatherContext) },
+          { type: "text", text: buildUserPrompt(images.length, weatherContext, userNotes) },
         ],
       },
     ],

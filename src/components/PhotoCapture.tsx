@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { X } from "lucide-react";
 import { CameraCapture } from "./CameraCapture";
 
@@ -10,6 +10,16 @@ interface Props {
 
 export function PhotoCapture({ photos, onChange, maxPhotos = 4 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
+
+  function addFiles(files: File[]) {
+    const room = maxPhotos - photos.length;
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    if (images.length > 0 && room > 0) {
+      onChange([...photos, ...images.slice(0, room)]);
+    }
+  }
 
   function addPhoto(photo: Blob) {
     if (photos.length >= maxPhotos) return;
@@ -21,26 +31,76 @@ export function PhotoCapture({ photos, onChange, maxPhotos = 4 }: Props) {
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
-    const room = maxPhotos - photos.length;
-    if (files.length > 0 && room > 0) {
-      onChange([...photos, ...files.slice(0, room)]);
-    }
+    addFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   }
 
+  function handleDragEnter(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!event.dataTransfer.types.includes("Files")) return;
+    dragCounter.current += 1;
+    setIsDragging(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragCounter.current = Math.max(0, dragCounter.current - 1);
+    if (dragCounter.current === 0) setIsDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    addFiles(Array.from(event.dataTransfer.files));
+  }
+
+  const canAddMore = photos.length < maxPhotos;
+
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-4">
+    <div
+      className="flex w-full max-w-md flex-col items-center gap-4"
+      onDragEnter={canAddMore ? handleDragEnter : undefined}
+      onDragOver={canAddMore ? handleDragOver : undefined}
+      onDragLeave={canAddMore ? handleDragLeave : undefined}
+      onDrop={canAddMore ? handleDrop : undefined}
+    >
       {photos.length > 0 ? (
-        <div className="grid w-full grid-cols-4 gap-2">
+        <div
+          className={`grid w-full grid-cols-4 gap-2 rounded-2xl p-1 transition-colors ${
+            isDragging ? "bg-neutral-100 ring-2 ring-black ring-offset-2" : ""
+          }`}
+        >
           {photos.map((photo, i) => (
             <PhotoThumb key={i} photo={photo} onRemove={() => removePhoto(i)} />
           ))}
+          {canAddMore && (
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 text-xs text-neutral-400 transition-colors hover:border-black hover:text-black"
+            >
+              Add
+            </button>
+          )}
         </div>
       ) : (
-        <div className="flex h-48 w-full items-center justify-center rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-50 text-sm text-neutral-500">
-          No photos yet
-        </div>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className={`flex h-48 w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed text-sm transition-colors ${
+            isDragging
+              ? "border-black bg-neutral-100 text-black"
+              : "border-neutral-300 bg-neutral-50 text-neutral-500 hover:border-neutral-400"
+          }`}
+        >
+          <span>{isDragging ? "Drop to add" : "No photos yet"}</span>
+          <span className="text-xs text-neutral-400">Drag and drop, or click to choose</span>
+        </button>
       )}
 
       <input
@@ -53,7 +113,7 @@ export function PhotoCapture({ photos, onChange, maxPhotos = 4 }: Props) {
         onChange={handleFileChange}
       />
 
-      {photos.length < maxPhotos && (
+      {canAddMore && (
         <div className="flex gap-2">
           <button
             type="button"
@@ -66,7 +126,7 @@ export function PhotoCapture({ photos, onChange, maxPhotos = 4 }: Props) {
         </div>
       )}
 
-      {photos.length > 0 && photos.length < maxPhotos && (
+      {photos.length > 0 && canAddMore && (
         <p className="text-center text-xs text-neutral-400">
           Add up to {maxPhotos} photos (leaf top, underside, stem, soil) for a more precise
           diagnosis.
@@ -77,12 +137,18 @@ export function PhotoCapture({ photos, onChange, maxPhotos = 4 }: Props) {
 }
 
 function PhotoThumb({ photo, onRemove }: { photo: Blob; onRemove: () => void }) {
-  const url = useMemo(() => URL.createObjectURL(photo), [photo]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  // Created and revoked inside one effect. Creating it during render and revoking in a
+  // cleanup breaks under StrictMode, which runs the cleanup and then reuses the dead URL.
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(photo);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [photo]);
 
   return (
     <div className="relative aspect-square overflow-hidden rounded-xl border border-neutral-200">
-      <img src={url} alt="" className="h-full w-full object-cover" />
+      {url && <img src={url} alt="" className="h-full w-full object-cover" />}
       <button
         type="button"
         onClick={onRemove}

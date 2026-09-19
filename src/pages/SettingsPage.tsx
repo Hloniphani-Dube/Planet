@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { LocationSettings } from "../components/LocationSettings";
+import { InstallButton } from "../components/InstallApp";
+import { ThemeSegmented } from "../components/ThemeToggle";
+import { useInstall } from "../lib/install";
 import { ensureAnonymousSession } from "../lib/supabase";
 import {
   clearApiKey,
@@ -25,10 +30,18 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [testStatus, setTestStatus] = useState<Record<string, TestStatus>>({});
   const [testMessage, setTestMessage] = useState<Record<string, string>>({});
+  const { hash } = useLocation();
+  const install = useInstall();
 
   useEffect(() => {
     void refresh();
   }, []);
+
+  // Links like /settings#location should land on that section.
+  useEffect(() => {
+    if (!hash) return;
+    document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [hash]);
 
   async function refresh() {
     setLoading(true);
@@ -110,8 +123,29 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-8">
-      <h1 className="mb-1 text-2xl font-semibold text-black">AI provider</h1>
+    <div className="mx-auto max-w-lg px-4 py-6 pb-10">
+      <h1 className="mb-4 text-2xl font-semibold text-black">Settings</h1>
+
+      <div className="mb-4 flex flex-col gap-4">
+        <section className="rounded-2xl border border-neutral-200 p-4">
+          <h2 className="mb-3 text-base font-semibold text-black">Appearance</h2>
+          <ThemeSegmented />
+        </section>
+
+        {!install.installed && (
+          <section className="rounded-2xl border border-neutral-200 p-4">
+            <h2 className="text-base font-semibold text-black">Install as an app</h2>
+            <p className="mb-3 mt-1 text-xs text-neutral-500">
+              Add Planet-i-Green to your home screen for one-tap access, a full-screen view, and offline use.
+            </p>
+            <InstallButton className="inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2 text-sm font-medium text-white" />
+          </section>
+        )}
+
+        <LocationSettings />
+      </div>
+
+      <h2 className="mb-1 mt-8 text-lg font-semibold text-black">AI provider</h2>
       <p className="mb-6 text-sm text-neutral-500">
         Bring your own API key for any supported model. Whichever one is active is used for
         diagnosis. Switch anytime, no redeploy needed.

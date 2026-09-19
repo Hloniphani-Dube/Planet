@@ -1,14 +1,70 @@
 @import "tailwindcss";
 
+/* Dark mode works by re-pointing the palette Tailwind's utilities already read from.
+   `bg-white`, `text-black`, `border-neutral-200` and friends resolve through these
+   variables, so flipping them under `.dark` restyles every page at once (including the
+   inverted `bg-black text-white` buttons) without a `dark:` variant on every element. */
+@theme {
+  --color-page: #ffffff;
+}
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --color-page: #0a0e0c;
+  --color-white: #121816;
+  --color-black: #f1f5f2;
+
+  --color-neutral-50: #161d19;
+  --color-neutral-100: #1b2320;
+  --color-neutral-200: #27312c;
+  --color-neutral-300: #38443e;
+  --color-neutral-400: #7d8b84;
+  --color-neutral-500: #99a69f;
+  --color-neutral-600: #b3beb8;
+  --color-neutral-700: #ccd5d0;
+  --color-neutral-800: #e2e8e4;
+
+  --color-green-50: #0f2018;
+  --color-green-100: #15301f;
+  --color-green-200: #1f4a2f;
+  --color-green-700: #4ade80;
+  --color-green-800: #86efac;
+
+  --color-amber-50: #251a0b;
+  --color-amber-100: #35250c;
+  --color-amber-200: #52380f;
+  --color-amber-700: #fbbf24;
+  --color-amber-800: #fcd34d;
+
+  --color-red-50: #2b1517;
+  --color-red-100: #3e1a1d;
+  --color-red-200: #5c2327;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+
+  --color-blue-50: #0f1c2e;
+  --color-blue-100: #142a47;
+  --color-blue-200: #1d3f6b;
+  --color-blue-700: #93c5fd;
+  --color-blue-800: #bfdbfe;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
   margin: 0;
   font-family: system-ui, "Segoe UI", Roboto, sans-serif;
-  background: #ffffff;
-  color: #0a0a0a;
+  background: var(--color-page);
+  color: var(--color-black, #0a0a0a);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 #root {
@@ -17,4 +73,61 @@ body {
 
 .grayscale-photo {
   filter: grayscale(1) contrast(1.05);
+}
+
+/* Room for the iPhone home indicator and Android gesture bar. */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Keyboard focus that's visible on both themes. */
+:focus-visible {
+  outline: 2px solid var(--color-green-600, #16a34a);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Leaflet: keep the map's internal z-indexes from climbing over the app's header and nav,
+   and darken the OpenStreetMap tiles in dark mode. */
+.map-shell {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+}
+
+.dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.75);
+}
+
+.dark .leaflet-container {
+  background: #10161a;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}
+
+.pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
 }

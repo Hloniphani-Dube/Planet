@@ -8,26 +8,57 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg"],
+      includeAssets: ["favicon.svg", "apple-touch-icon.png"],
       manifest: {
-        name: "Planet, plant health companion",
-        short_name: "Planet",
+        id: "/",
+        name: "Planet-i-Green, plant health companion",
+        short_name: "Planet-i-Green",
         description: "Point a camera at a plant and get a diagnosis and a low-cost fix.",
-        theme_color: "#000000",
+        theme_color: "#ffffff",
         background_color: "#ffffff",
         display: "standalone",
+        orientation: "portrait",
         start_url: "/",
-        // TODO: replace with real 192/512 PNG app icons before shipping;
-        // the SVG placeholder keeps the manifest valid without missing-file 404s.
-        icons: [{ src: "/favicon.svg", sizes: "any", type: "image/svg+xml" }],
+        scope: "/",
+        categories: ["lifestyle", "education", "utilities"],
+        // Chrome requires 192 and 512 px PNGs to offer installation; the maskable one lets
+        // Android crop the icon to any shape. Regenerate with `node scripts/generate-icons.mjs`.
+        icons: [
+          { src: "/pwa-192x192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/pwa-512x512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "/pwa-maskable-512x512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          { src: "/favicon.svg", sizes: "any", type: "image/svg+xml" },
+        ],
+        shortcuts: [
+          { name: "Scan a plant", short_name: "Scan", url: "/" },
+          { name: "Care calendar", short_name: "Care", url: "/calendar" },
+          { name: "Plant guide", short_name: "Explore", url: "/explore" },
+        ],
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+        // Client-side routes (/plants/123, /report/abc) should load the app shell offline.
+        navigateFallback: "/index.html",
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith("/api"),
-            handler: "NetworkFirst",
-            options: { cacheName: "api-cache" },
+            // Map tiles: cache what you've looked at so the community map still draws offline.
+            urlPattern: ({ url }) => url.hostname === "tile.openstreetmap.org",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "map-tiles",
+              expiration: { maxEntries: 200, maxAgeSeconds: 7 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            // Plant photos from Supabase Storage: show the garden and reports offline.
+            urlPattern: ({ url }) => url.pathname.includes("/storage/v1/object/public/plant-photos/"),
+            handler: "StaleWhileRevalidate",
+            options: {
+              cacheName: "plant-photos",
+              expiration: { maxEntries: 120, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
           },
         ],
       },

@@ -5,7 +5,12 @@ import type { AiProvider, Diagnosis, ImageInput } from "../types.ts";
 
 interface ProviderDef {
   label: string;
-  diagnose: (apiKey: string, images: ImageInput[], weatherContext?: string) => Promise<Diagnosis>;
+  diagnose: (
+    apiKey: string,
+    images: ImageInput[],
+    weatherContext?: string,
+    userNotes?: string,
+  ) => Promise<Diagnosis>;
   test: (apiKey: string) => Promise<void>;
 }
 

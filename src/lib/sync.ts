@@ -1,24 +1,34 @@
-import { db as localDb } from "./db";
+import { db as localDb, type QueuedUpload } from "./db";
 import { supabase, ensureAnonymousSession } from "./supabase";
 import { diagnosePlant } from "./api";
-import type { Diagnosis, PlantReport } from "./types";
+import { createPlant, getPlant, updatePlantAfterScan } from "./plants";
+import { scheduleFromDiagnosis } from "./careTasks";
+import type { BlurredPoint } from "./geo";
+import type { CareCalendarEntry, Diagnosis, Plant, PlantReport } from "./types";
 
 let syncing = false;
 
-export async function queuePhotos(photoBlobs: Blob[], lat?: number, lng?: number): Promise<string> {
+export type QueueOptions = Omit<QueuedUpload, "id" | "photoBlobs" | "createdAt">;
+
+export async function queuePhotos(photoBlobs: Blob[], options: QueueOptions = {}): Promise<string> {
   const id = crypto.randomUUID();
-  await localDb.uploadQueue.add({ id, photoBlobs, lat, lng, createdAt: Date.now() });
+  await localDb.uploadQueue.add({ id, photoBlobs, createdAt: Date.now(), ...options });
   return id;
 }
 
-/** Uploads the photos, inserts the report row, and caches it locally. Shared by the
- * immediate (online) diagnose flow and the offline queue flush. */
+interface SaveReportOptions {
+  location?: BlurredPoint;
+  /** Attaches this report to an existing plant profile and updates its health status. */
+  plantId?: string;
+}
+
+/** Uploads the photos, inserts the report row, and caches it locally. */
 export async function saveReport(
   photoBlobs: Blob[],
   diagnosis: Diagnosis,
-  lat?: number,
-  lng?: number,
+  options: SaveReportOptions = {},
 ): Promise<PlantReport> {
+  const { location, plantId } = options;
   const user = await ensureAnonymousSession();
 
   const photoUrls = await Promise.all(
@@ -40,14 +50,29 @@ export async function saveReport(
     .from("reports")
     .insert({
       user_id: user.id,
+      plant_id: plantId,
       photo_urls: photoUrls,
       plant_name: diagnosis.plantName,
+      scientific_name: diagnosis.scientificName || null,
+      identification_confidence: diagnosis.identificationConfidence,
       category: diagnosis.category,
       summary: diagnosis.summary,
       fix: diagnosis.fix,
       confidence: diagnosis.confidence,
-      lat,
-      lng,
+      health_status: diagnosis.healthStatus,
+      severity_score: diagnosis.severityScore,
+      possible_causes: diagnosis.possibleCauses,
+      recommended_actions: diagnosis.recommendedActions,
+      urgency: diagnosis.urgency,
+      follow_up_days: diagnosis.followUpDays,
+      limitations: diagnosis.limitations,
+      companion_tip: diagnosis.companionTip || null,
+      native_alternative: diagnosis.nativeAlternative || null,
+      care_profile: diagnosis.careProfile,
+      care_tasks: diagnosis.careTasks,
+      lat: location?.lat,
+      lng: location?.lng,
+      geohash: location?.geohash,
     })
     .select()
     .single();
@@ -56,10 +81,12 @@ export async function saveReport(
   const report: PlantReport = {
     id: inserted.id,
     userId: user.id,
+    plantId,
     photoUrls,
     diagnosis,
-    lat,
-    lng,
+    lat: location?.lat,
+    lng: location?.lng,
+    geohash: location?.geohash,
     resolved: false,
     helpfulCount: 0,
     reactedByMe: false,
@@ -70,6 +97,61 @@ export async function saveReport(
   return report;
 }
 
+export type PlantChoice =
+  | { kind: "existing"; plant: Plant }
+  | { kind: "new"; name?: string; environment?: "indoor" | "outdoor" }
+  | { kind: "none" };
+
+export interface GardenSaveResult {
+  report: PlantReport;
+  plant?: Plant;
+  reminders: CareCalendarEntry[];
+}
+
+/** The whole "a scan becomes part of the garden" step: save the report, create or update
+ * the plant profile, and turn the diagnosis into reminders. Used by the live scan flow and
+ * by the offline queue, so a delayed scan ends up in exactly the same place. */
+export async function saveDiagnosisToGarden(input: {
+  photos: Blob[];
+  diagnosis: Diagnosis;
+  choice: PlantChoice;
+  location?: BlurredPoint;
+}): Promise<GardenSaveResult> {
+  const { photos, diagnosis, choice, location } = input;
+
+  let plant: Plant | undefined = choice.kind === "existing" ? choice.plant : undefined;
+  if (choice.kind === "new") {
+    plant = await createPlant({
+      name: choice.name?.trim() || diagnosis.plantName,
+      species: diagnosis.scientificName || undefined,
+      environment: choice.environment,
+      careProfile: diagnosis.careProfile,
+      healthStatus: diagnosis.healthStatus,
+    });
+  }
+
+  const report = await saveReport(photos, diagnosis, { location, plantId: plant?.id });
+
+  if (plant) {
+    try {
+      plant = await updatePlantAfterScan(plant, diagnosis, report.photoUrls[0]);
+    } catch (err) {
+      // The report itself is saved; a stale cover photo or health dot isn't worth failing over.
+      console.error("Couldn't update the plant after scanning", err);
+    }
+  }
+
+  const reminders = await scheduleFromDiagnosis({
+    reportId: report.id,
+    photoUrl: report.photoUrls[0],
+    target: { plantId: plant?.id, plantName: plant?.name ?? diagnosis.plantName },
+    diagnosis,
+    profile: plant?.careProfile ?? diagnosis.careProfile,
+  });
+
+  return { report, plant, reminders };
+}
+
 export async function processQueue(): Promise<void> {
   if (syncing || !navigator.onLine) return;
   syncing = true;
@@ -77,8 +159,22 @@ export async function processQueue(): Promise<void> {
     const pending = await localDb.uploadQueue.toArray();
     for (const item of pending) {
       try {
-        const diagnosis = await diagnosePlant(item.photoBlobs);
-        await saveReport(item.photoBlobs, diagnosis, item.lat, item.lng);
+        const diagnosis = await diagnosePlant(item.photoBlobs, item.weatherContext, item.userNotes);
+
+        let choice: PlantChoice = { kind: "none" };
+        if (item.plantId) {
+          const plant = await getPlant(item.plantId);
+          if (plant) choice = { kind: "existing", plant };
+        } else if (item.addToGarden) {
+          choice = { kind: "new", name: item.plantNameInput, environment: item.environment };
+        }
+
+        await saveDiagnosisToGarden({
+          photos: item.photoBlobs,
+          diagnosis,
+          choice,
+          location: item.location,
+        });
         await localDb.uploadQueue.delete(item.id);
       } catch (err) {
         console.error("Failed to sync plant report", item.id, err);

@@ -1,11 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type { ResponseSchema } from "@google/generative-ai";
 import { blobToBase64 } from "./blob";
 import {
   buildUserPrompt,
-  DIAGNOSIS_CATEGORIES,
   DIAGNOSIS_JSON_SCHEMA,
   SYSTEM_PROMPT,
+  toGeminiSchema,
 } from "./diagnosisSchema";
+import { normalizeDiagnosis } from "./diagnosis";
 import type { AiProvider, Diagnosis } from "./types";
 
 interface ImageInput {
@@ -21,13 +23,14 @@ async function diagnoseWithClaude(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const { default: AnthropicSdk } = await import("@anthropic-ai/sdk");
   const client = new AnthropicSdk({ apiKey, dangerouslyAllowBrowser: true });
 
   const message = await client.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 512,
+    max_tokens: 2048,
     system: SYSTEM_PROMPT,
     tools: [
       {
@@ -49,7 +52,7 @@ async function diagnoseWithClaude(
               data: image.base64,
             },
           })),
-          { type: "text" as const, text: buildUserPrompt(images.length, weatherContext) },
+          { type: "text" as const, text: buildUserPrompt(images.length, weatherContext, userNotes) },
         ],
       },
     ],
@@ -68,19 +71,20 @@ async function diagnoseWithOpenAI(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const { default: OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
 
   const completion = await client.chat.completions.create({
     model: "gpt-4o",
-    max_tokens: 512,
+    max_tokens: 2048,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
         content: [
-          { type: "text", text: buildUserPrompt(images.length, weatherContext) },
+          { type: "text", text: buildUserPrompt(images.length, weatherContext, userNotes) },
           ...images.map((image) => ({
             type: "image_url" as const,
             image_url: { url: `data:${image.mimeType};base64,${image.base64}` },
@@ -112,39 +116,23 @@ async function diagnoseWithGemini(
   apiKey: string,
   images: ImageInput[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
-  const { GoogleGenerativeAI, SchemaType } = await import("@google/generative-ai");
+  const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: "gemini-3.6-flash",
     systemInstruction: SYSTEM_PROMPT,
     generationConfig: {
       responseMimeType: "application/json",
-      responseSchema: {
-        type: SchemaType.OBJECT,
-        properties: {
-          plantName: { type: SchemaType.STRING },
-          category: {
-            type: SchemaType.STRING,
-            format: "enum",
-            enum: [...DIAGNOSIS_CATEGORIES],
-          },
-          summary: { type: SchemaType.STRING },
-          fix: { type: SchemaType.STRING },
-          confidence: {
-            type: SchemaType.STRING,
-            format: "enum",
-            enum: ["low", "medium", "high"],
-          },
-        },
-        required: ["plantName", "category", "summary", "fix", "confidence"],
-      },
+      // Gemini's dialect of the same JSON Schema the other providers use.
+      responseSchema: toGeminiSchema(DIAGNOSIS_JSON_SCHEMA) as unknown as ResponseSchema,
     },
   });
 
   const result = await model.generateContent([
     ...images.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.base64 } })),
-    { text: buildUserPrompt(images.length, weatherContext) },
+    { text: buildUserPrompt(images.length, weatherContext, userNotes) },
   ]);
 
   return JSON.parse(result.response.text()) as Diagnosis;
@@ -177,7 +165,12 @@ interface ClientProviderDef {
   label: string;
   helpText: string;
   helpUrl: string;
-  diagnose: (apiKey: string, images: ImageInput[], weatherContext?: string) => Promise<Diagnosis>;
+  diagnose: (
+    apiKey: string,
+    images: ImageInput[],
+    weatherContext?: string,
+    userNotes?: string,
+  ) => Promise<Diagnosis>;
   test: (apiKey: string) => Promise<void>;
 }
 
@@ -214,9 +207,11 @@ export async function diagnosePlantInBrowser(
   apiKey: string,
   photos: Blob[],
   weatherContext?: string,
+  userNotes?: string,
 ): Promise<Diagnosis> {
   const images = await Promise.all(photos.map(toImageInput));
-  return CLIENT_PROVIDERS[provider].diagnose(apiKey, images, weatherContext);
+  const raw = await CLIENT_PROVIDERS[provider].diagnose(apiKey, images, weatherContext, userNotes);
+  return normalizeDiagnosis(raw);
 }
 
 /** Throws if the key is invalid or rejected by the vendor; resolves on success. */

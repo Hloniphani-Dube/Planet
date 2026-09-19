@@ -31,7 +31,7 @@ section at the bottom applies.
 ## 2. Create the Supabase project
 
 1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) → **New project**.
-2. Pick an organization, name it (e.g. "planet-app"), set a database password (save it
+2. Pick an organization, name it (e.g. "planet-i-green"), set a database password (save it
    somewhere, you likely won't need it day-to-day since the app talks to Postgres
    through Supabase's APIs, not a raw connection string), and pick a region close to your
    users.
@@ -70,11 +70,17 @@ the app with no signup screen, same as before.
 
 ## 5. Push the database schema
 
-The schema lives in `supabase/migrations/`: one file that creates `reports` (plant
-diagnoses, publicly readable, insert/update/delete restricted to the reporting user),
-`secrets` and `app_config` (API keys and the active-provider setting, locked out for
-every client role via RLS with no policies, service_role only), and the `plant-photos`
-storage bucket with matching policies.
+The schema lives in `supabase/migrations/`, applied in order:
+
+1. `..._init_schema.sql` creates `plants` (private to their owner), `reports` (plant
+   diagnoses, publicly readable, insert/update/delete restricted to the reporting user),
+   `report_reactions`, `secrets` and `app_config` (API keys and the active-provider
+   setting, locked out for every client role via RLS with no policies, service_role
+   only), and the `plant-photos` storage bucket with matching policies.
+2. `..._feature_expansion.sql` is additive (`add column if not exists`), so it is safe on
+   a project that already has data. It adds a care profile to plants; severity score,
+   companion tip, native alternative, care tasks and geohash to reports; indexes for the
+   community map; and rounds any older exact coordinates to about 1 km.
 
 ```
 npx supabase db push
@@ -90,9 +96,10 @@ diff` generates new migration files from local changes.)
 npx supabase functions deploy
 ```
 
-This deploys all five functions in `supabase/functions/`: `diagnose-plant` (looks up
-whichever provider is active and calls that vendor's vision API), and
-`get-provider-status` / `save-api-key` / `clear-api-key` / `set-active-provider` (the
+This deploys all six functions in `supabase/functions/`: `diagnose-plant` (checks the
+caller is signed in, looks up whichever provider is active and calls that vendor's vision
+API), and
+`get-provider-status` / `save-api-key` / `clear-api-key` / `set-active-provider` / `test-api-key` (the
 Settings page's backend). Nothing needs an API key yet, that happens in the app, next.
 No build step is needed. Deno resolves the `npm:` package imports at deploy time.
 
@@ -117,6 +124,17 @@ npm run build
 Then deploy the `dist/` folder with whichever static host you picked, or run `npm run
 dev` locally against the real Supabase project for testing.
 
+**Installing as an app.** The service worker and the browser's "install" prompt only work
+over HTTPS (every host above provides it) and only in a production build, not
+`npm run dev`. The install icons are PNGs in `public/`; regenerate them with `node
+scripts/generate-icons.mjs` if you change the design.
+
+**Nothing else to configure for the new features.** Weather alerts use Open-Meteo and
+place search uses Open-Meteo's geocoder (both free, no key), and the community map draws
+OpenStreetMap tiles. Keep the OpenStreetMap attribution the map already shows, and
+consider a tile provider of your own if you expect heavy traffic (their tile usage policy
+is meant for light use).
+
 ## 8. Add an API key and go live
 
 1. Open the app and go to **Settings**.
@@ -124,7 +142,7 @@ dev` locally against the real Supabase project for testing.
    (console.anthropic.com), OpenAI (platform.openai.com), or Gemini
    (aistudio.google.com/app/apikey), and hit **Save**.
 3. Click **Set active** on that provider. The status dot turns green.
-4. Go to **Diagnose** and try a photo. If it fails with "No AI provider is set up yet,"
+4. Go to **Scan** and try a photo. If it fails with "No AI provider is set up yet,"
    you skipped step 2 or 3.
 
 You can add keys for more than one provider and switch the active one anytime from
@@ -140,7 +158,9 @@ anyone with the deployed URL could overwrite your API key or switch providers. B
 real launch, gate those functions behind an admin check: add a `role` claim to the user's
 JWT (via a Postgres trigger or an Admin API call setting `app_metadata`), and check it at
 the top of each function via `getUserFromRequest` before proceeding.
-`diagnose-plant` doesn't need that gate. It only reads keys, never writes them.
+`diagnose-plant` doesn't need that admin gate because it only reads keys, never writes them,
+but it does require a signed-in session (anonymous counts), so the deployed key can't be
+spent by a caller who has nothing but the URL.
 
 ## Day-to-day (after initial setup)
 
